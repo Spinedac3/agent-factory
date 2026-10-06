@@ -1,8 +1,12 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 
 describe("app", () => {
-  const app = buildApp();
+  let app: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    app = await buildApp();
+  });
 
   afterAll(async () => {
     await app.close();
