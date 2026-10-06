@@ -23,10 +23,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
-    "test:integration": "cross-env INTEGRATION_TESTS=true vitest run --no-file-parallelism"
+    "test:integration": "cross-env INTEGRATION_TESTS=true vitest run --no-file-parallelism",
+    "assistant:check": "tsx --env-file-if-exists=.env src/cli/checkAssistant.ts"
   },
   "dependencies": {
-    "fastify": "^5.11.0"
+    "fastify": "^5.11.0",
+    "jose": "^6.2.12",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
