@@ -1,0 +1,67 @@
+{
+  "name": "Clientes con crédito alto",
+  "description": "Lee los clientes de la distribuidora, separa los de crédito alto y escribe un resumen por zona",
+  "program": {
+    "nodes": [
+      { "id": "inicio", "type": "start", "title": "A pedido" },
+      {
+        "id": "leer",
+        "type": "query",
+        "title": "Leer los clientes",
+        "tool": "clientes_por_zona",
+        "on_failure": "sin_datos"
+      },
+      {
+        "id": "clasificar",
+        "type": "classify",
+        "title": "Separar por límite de crédito",
+        "from": "leer.detalle",
+        "by": "limite_credito",
+        "classes": [
+          { "name": "alto", "op": ">=", "value": 50000, "severity": "high" },
+          { "name": "medio", "op": ">=", "value": 20000, "severity": "medium" },
+          { "name": "bajo", "rest": true }
+        ]
+      },
+      { "id": "hay_altos", "type": "decision", "title": "¿Hay clientes con crédito alto?" },
+      {
+        "id": "resumir",
+        "type": "action",
+        "title": "Escribir el resumen",
+        "from": "clasificar",
+        "only": ["alto"],
+        "summarize": { "by": ["zona"], "sum": ["limite_credito"] },
+        "agentic": {
+          "instruction": "Escribe un resumen breve, en español, de los clientes con crédito alto: cuántos hay, en qué zonas se concentran y el crédito total. Cierra con una recomendación para el equipo de cobros."
+        }
+      },
+      { "id": "entregado", "type": "end", "title": "Resumen escrito", "status": "delivered" },
+      {
+        "id": "nada",
+        "type": "end",
+        "title": "Sin crédito alto",
+        "status": "no_findings",
+        "text": "Ningún cliente tiene crédito alto"
+      },
+      {
+        "id": "sin_datos",
+        "type": "end",
+        "title": "No se pudo leer",
+        "status": "failed"
+      }
+    ],
+    "edges": [
+      { "from": "inicio", "to": "leer" },
+      { "from": "leer", "to": "clasificar" },
+      { "from": "clasificar", "to": "hay_altos" },
+      {
+        "from": "hay_altos",
+        "to": "resumir",
+        "label": "sí",
+        "condition": { "count": ["clasificar.alto"], "op": ">", "value": 0 }
+      },
+      { "from": "hay_altos", "to": "nada", "label": "no", "otherwise": true },
+      { "from": "resumir", "to": "entregado" }
+    ]
+  }
+}

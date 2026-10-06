@@ -81,7 +81,7 @@ describe("the assistant, seen from the factory", () => {
 
   it("knows a person by a session the assistant signed, and nobody by any other", async () => {
     // Performs the test.
-    const app = buildApp({
+    const app = await buildApp({
       verifyPerson: personVerifier(assistantKeys(assistantUrl), "ai-assistant"),
     });
     const me = (token: string) =>
