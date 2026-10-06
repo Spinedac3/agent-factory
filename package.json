@@ -1,0 +1,39 @@
+{
+  "name": "agent-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Builds and schedules agents that use an assistant's tools over MCP",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Spinedac3/agent-factory.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@12.9.1",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "test:integration": "cross-env INTEGRATION_TESTS=true vitest run --no-file-parallelism"
+  },
+  "dependencies": {
+    "fastify": "^5.11.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@types/node": "^22.20.1",
+    "cross-env": "^10.1.0",
+    "tsx": "^4.23.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
