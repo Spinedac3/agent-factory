@@ -1,12 +1,8 @@
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { loadEnv } from "../config/env.js";
 import { connectDatabase } from "../db/client.js";
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-  throw new Error("Falta DATABASE_URL");
-}
-
-const database = connectDatabase(url);
+const database = connectDatabase(loadEnv().DATABASE_URL);
 await migrate(database.db, { migrationsFolder: "./src/db/migrations" });
 await database.close();
 console.info("Migraciones aplicadas");

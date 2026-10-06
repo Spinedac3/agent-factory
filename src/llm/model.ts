@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { CallModel } from "../programs/run.js";
 
 export interface ModelCommand {
@@ -71,8 +71,10 @@ export function turnPrompt(instruction: string, data: string): string {
  */
 export function modelCaller(command: ModelCommand): CallModel {
   return async ({ instruction, data }) => {
-    await mkdir(command.workspacesDir, { recursive: true });
-    const workspace = await mkdtemp(join(command.workspacesDir, "turn-"));
+    // Absolute, since the CLI runs inside the turn's folder and reads its configuration from there
+    const root = resolve(command.workspacesDir);
+    await mkdir(root, { recursive: true });
+    const workspace = await mkdtemp(join(root, "turn-"));
     try {
       const mcpConfig = join(workspace, ".mcp.json");
       await writeFile(mcpConfig, JSON.stringify({ mcpServers: {} }));
@@ -140,7 +142,11 @@ async function runCli(
   child.stdin.end(prompt);
   const chunks: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  child.stderr.resume();
+  // The end of what it complained about, to say why it failed
+  let complaint = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    complaint = `${complaint}${chunk.toString("utf8")}`.slice(-300);
+  });
   const timer = setTimeout(() => child.kill("SIGKILL"), TURN_TIMEOUT_MS);
   try {
     const code = await new Promise<number | null>((resolve, reject) => {
@@ -148,7 +154,9 @@ async function runCli(
       child.on("error", reject);
     });
     if (code !== 0) {
-      throw new Error(`el modelo terminó con código ${code}`);
+      throw new Error(
+        `el modelo terminó con código ${code}${complaint.trim() ? `: ${complaint.trim()}` : ""}`,
+      );
     }
   } finally {
     clearTimeout(timer);

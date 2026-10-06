@@ -1,4 +1,12 @@
 // A stand-in for the Claude CLI: answers with what it received, so a test can see it
+import { existsSync } from "node:fs";
+
+// As the real one, it reads its MCP configuration from where it runs
+const config = process.argv[process.argv.indexOf("--mcp-config") + 1];
+if (!config || !existsSync(config)) {
+  process.stderr.write(`MCP config file not found: ${config}`);
+  process.exit(1);
+}
 let stdin = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {

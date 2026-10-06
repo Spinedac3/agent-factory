@@ -45,6 +45,25 @@ describe("the model of an agentic step", () => {
     expect(seen.env).not.toContain("FACTORY_SECRET");
   });
 
+  it("finds its configuration from a workspace folder given as a relative path", async () => {
+    // Performs the test.
+    const relative = modelCaller({
+      bin: process.execPath,
+      binArgs: [FAKE],
+      model: "claude-sonnet-5",
+      workspacesDir: join("node_modules", ".turns-test"),
+    });
+    const answer = await relative({
+      group: "x",
+      instruction: "Escribe algo breve",
+      data: "",
+      attempt: 1,
+    });
+
+    // Performs assertions.
+    expect(JSON.parse(answer).stdin).toContain("Escribe algo breve");
+  });
+
   it("fails when the CLI ends badly", async () => {
     // Performs the test.
     const attempt = fakeModel()({ group: "x", instruction: "FAIL_EXIT now", data: "", attempt: 1 });
