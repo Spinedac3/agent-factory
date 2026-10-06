@@ -151,9 +151,22 @@ describe("the assistant, seen from the factory", () => {
       }).issue({ ownerId: 7, tools: ["calculate"], minutes: 5, runId: "run-3" }),
     );
 
+    const shapeless = await refusal(
+      new RunTokens({
+        assistantUrl,
+        clientId: "agent-factory",
+        secret: "s",
+        fetch: async () => Response.json({ ok: true }, { status: 201 }),
+      }).issue({ ownerId: 7, tools: ["calculate"], minutes: 5, runId: "run-4" }),
+    );
+
     // Performs assertions.
     expect(refused).toBeInstanceOf(RunTokenError);
     expect([refused.code, refused.denied]).toEqual(["no_tools", ["payroll_totals"]]);
+    expect([shapeless.code, shapeless.message]).toEqual([
+      "invalid_answer",
+      "El asistente respondió algo que no es un token",
+    ]);
     expect([unreachable.code, unreachable.message]).toEqual([
       "assistant_unreachable",
       "No se pudo contactar al asistente",

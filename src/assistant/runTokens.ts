@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export interface RunTokenRequest {
   ownerId: number;
   tools: string[];
@@ -32,6 +34,13 @@ export class RunTokenError extends Error {
   }
 }
 
+const issuedSchema = z.object({
+  token: z.string().min(1),
+  tools: z.array(z.string()),
+  denied: z.array(z.string()),
+  expires_in: z.number().int().positive(),
+});
+
 export interface RunTokensDependencies {
   assistantUrl: string;
   clientId: string;
@@ -44,6 +53,8 @@ export interface RunTokensDependencies {
  */
 export class RunTokens {
   /**
+   * Prepares the client with the assistant's address and this factory's credentials
+   *
    * @param   deps  The assistant's address, this client's credentials and how to reach it
    */
   constructor(private readonly deps: RunTokensDependencies) {}
@@ -64,12 +75,12 @@ export class RunTokens {
       minutes: request.minutes,
       run_id: request.runId,
     });
-    const data = answer.data as {
-      token: string;
-      tools: string[];
-      denied: string[];
-      expires_in: number;
-    };
+    // An answer that does not have the expected shape is a refusal, never a token to trust
+    const parsed = issuedSchema.safeParse(answer.data);
+    if (!parsed.success) {
+      throw new RunTokenError("invalid_answer", "El asistente respondió algo que no es un token");
+    }
+    const data = parsed.data;
 
     return {
       token: data.token,

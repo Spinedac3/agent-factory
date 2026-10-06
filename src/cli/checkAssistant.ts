@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { RunTokenError, RunTokens } from "../assistant/runTokens.js";
 import { loadEnv } from "../config/env.js";
 
@@ -11,6 +11,11 @@ if (!Number.isInteger(ownerId) || ownerId <= 0 || tools.length === 0) {
 }
 
 const env = loadEnv();
+if (!existsSync(env.ASSISTANT_CLIENT_SECRET_FILE)) {
+  throw new Error(
+    `Falta el secreto en ${env.ASSISTANT_CLIENT_SECRET_FILE}; créalo en el asistente con pnpm machine:create agent-factory`,
+  );
+}
 const runTokens = new RunTokens({
   assistantUrl: env.ASSISTANT_URL,
   clientId: env.ASSISTANT_CLIENT_ID,
@@ -19,11 +24,12 @@ const runTokens = new RunTokens({
 
 try {
   const run = await runTokens.issue({ ownerId, tools, minutes: 1, runId: `check-${randomUUID()}` });
-  await runTokens.revoke(run.token);
+  // What it can use is said first, so a failure to end the token does not hide it
   console.info(`Puede usar: ${run.tools.join(", ")}`);
   if (run.denied.length > 0) {
     console.info(`No puede usar: ${run.denied.join(", ")}`);
   }
+  await runTokens.revoke(run.token);
 } catch (error) {
   if (error instanceof RunTokenError) {
     console.error(
