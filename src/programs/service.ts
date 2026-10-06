@@ -113,10 +113,6 @@ export class Programs {
     description: string,
     raw: unknown,
   ): Promise<Saved | null> {
-    const [existing] = await this.deps.db.select().from(programs).where(eq(programs.code, code));
-    if (existing && existing.ownerId !== ownerId) {
-      return null;
-    }
     const parsed = judgeProgram(raw, new Map());
     if (!parsed.program) {
       return { code, verdict: parsed };
@@ -126,14 +122,13 @@ export class Programs {
       await this.catalogFor(ownerId, toolsOf(parsed.program)),
     );
     const values = { name, description, draft: parsed.program, updatedAt: new Date() };
-    // A code taken by someone else between the read and the write is still theirs
-    const created = existing
-      ? []
-      : await this.deps.db
-          .insert(programs)
-          .values({ ...values, code, ownerId })
-          .onConflictDoNothing({ target: programs.code })
-          .returning({ id: programs.id });
+    // Ownership is decided by the write itself: a code someone else holds, even one taken a moment
+    // ago, updates nothing
+    const created = await this.deps.db
+      .insert(programs)
+      .values({ ...values, code, ownerId })
+      .onConflictDoNothing({ target: programs.code })
+      .returning({ id: programs.id });
     if (created.length === 0) {
       const changed = await this.deps.db
         .update(programs)

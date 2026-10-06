@@ -404,6 +404,13 @@ describe("an agentic step", () => {
   it("writes the groups in alphabetical order and cuts by the limit", async () => {
     // Performs the test.
     const groups: string[] = [];
+    const southFirst = {
+      ok: true as const,
+      data: {
+        filas: [...ORDERS].sort((a) => (a.ruta === "sur" ? -1 : 1)),
+        total_filas: ORDERS.length,
+      },
+    };
     await run(
       agentic({
         limit: 1,
@@ -412,6 +419,7 @@ describe("an agentic step", () => {
         },
       }),
       {
+        callTool: fakeTools({ pedidos_atrasados: southFirst }).callTool,
         callModel: async ({ group }) => {
           groups.push(group);
           return "ok";

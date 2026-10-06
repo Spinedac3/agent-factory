@@ -149,8 +149,8 @@ describe("programs", () => {
     expect([theirs.statusCode, overwrite.statusCode, anonymous.statusCode]).toEqual([
       404, 404, 401,
     ]);
-    expect(issued.map((request) => request.minutes)).toEqual([1]);
-    expect(revoked).toEqual(["token:1:pedidos_atrasados,send_notice"]);
+    expect(issued.map((request) => request.minutes)).toEqual([1, 1]);
+    expect(revoked).toEqual(["token:1:pedidos_atrasados,send_notice", "token:2:pedidos_atrasados"]);
   });
 
   it("keeps a draft with errors, and refuses to publish it", async () => {
@@ -245,16 +245,15 @@ describe("programs", () => {
     });
   });
 
-  it("gives two publishes at the same time two numbers", async () => {
+  it("gives publishes at the same time a number each", async () => {
     // Performs the test.
     await as("ana", "PUT", "/programs/doble", { name: "Doble publicación", program: lateOrders() });
-    const both = await Promise.all([
-      as("ana", "POST", "/programs/doble/publish"),
-      as("ana", "POST", "/programs/doble/publish"),
-    ]);
+    const all = await Promise.all(
+      Array.from({ length: 5 }, () => as("ana", "POST", "/programs/doble/publish")),
+    );
 
     // Performs assertions.
-    expect(both.map((response) => response.json().data.version).sort()).toEqual([1, 2]);
+    expect(all.map((response) => response.json().data.version).sort()).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("ends the token even when the session cannot open, and answers 502 when the assistant is away", async () => {

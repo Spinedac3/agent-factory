@@ -168,10 +168,19 @@ describe("judging a program", () => {
         { name: "leve", op: ">=", value: 3 },
       ],
     });
+    const restFirst = errorsWith("clasificar", {
+      classes: [
+        { name: "al_dia", rest: true },
+        { name: "grave", op: ">=", value: 7 },
+        { name: "leve", op: ">=", value: 3 },
+      ],
+      exceptions: undefined,
+    });
     const wrongField = errorsWith("clasificar", { by: "atraso" });
 
     // Performs assertions.
     expect(noRest).toEqual(["'clasificar' necesita exactamente una clase rest, y al final"]);
+    expect(restFirst).toEqual(["'clasificar' necesita exactamente una clase rest, y al final"]);
     expect(wrongField).toEqual(["'clasificar' clasifica por 'atraso', que sus filas no traen"]);
   });
 
