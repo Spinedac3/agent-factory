@@ -704,6 +704,19 @@ describe("the rest of the language", () => {
     expect(result.text).toContain("Lo que sí se redactó:\nResumen del norte");
   });
 
+  it("names the lost groups in the same order however their turns end", async () => {
+    // Performs the test.
+    const result = await run(agentic({ tool: undefined, per_group: undefined }), {
+      callModel: async ({ group }) => {
+        await new Promise((done) => setTimeout(done, group === "norte" ? 20 : 0));
+        throw new Error(`sin cupo en ${group}`);
+      },
+    });
+
+    // Performs assertions.
+    expect(result.reason).toMatch(/norte: .*sin cupo en norte.*, sur: .*sin cupo en sur/);
+  });
+
   it("drops a group named like a property every object has, unless the owner listed it", async () => {
     // Performs the test.
     const odd = {

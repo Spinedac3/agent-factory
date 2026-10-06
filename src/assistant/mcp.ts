@@ -59,7 +59,9 @@ export async function openSession(assistantUrl: string, token: string): Promise<
   return {
     tools: async () => {
       const tools: ToolSchemas[] = [];
-      // Every page: a long catalog comes in parts
+      // Every page: a long catalog comes in parts, and a server that repeats a cursor would
+      // otherwise be asked forever
+      const seen = new Set<string>();
       let cursor: string | undefined;
       do {
         const page = await client.listTools(cursor ? { cursor } : {});
@@ -71,6 +73,12 @@ export async function openSession(assistantUrl: string, token: string): Promise<
           })),
         );
         cursor = page.nextCursor;
+        if (cursor !== undefined && seen.has(cursor)) {
+          throw new Error("El asistente repite la misma página del catálogo de herramientas");
+        }
+        if (cursor !== undefined) {
+          seen.add(cursor);
+        }
       } while (cursor);
       return tools;
     },

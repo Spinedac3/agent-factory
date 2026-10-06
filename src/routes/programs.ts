@@ -28,6 +28,9 @@ const NOT_FOUND = {
   message: "Ese programa no existe o no es tuyo",
 };
 
+// What the assistant answers when it is away or broken, as opposed to refusing the owner
+const UPSTREAM = /^(assistant_unreachable|invalid_answer|http_5\d\d)$/;
+
 /**
  * Registers the programs of each person: save, judge, publish and run on demand
  *
@@ -40,13 +43,16 @@ export default async function programsRoutes(
 ): Promise<void> {
   const { db, programs: service } = options;
 
-  // Judging and running need the assistant: when it does not answer, the fault is upstream
+  // Judging and running need the assistant: when it does not answer, the fault is upstream and
+  // worth retrying; when it refuses the owner, retrying changes nothing
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof RunTokenError) {
       request.log.warn({ code: error.code }, "assistant refused or did not answer");
-      return reply
-        .code(502)
-        .send({ ok: false, error: "assistant_unavailable", message: error.message });
+      return UPSTREAM.test(error.code)
+        ? reply
+            .code(502)
+            .send({ ok: false, error: "assistant_unavailable", message: error.message })
+        : reply.code(403).send({ ok: false, error: error.code, message: error.message });
     }
     throw error;
   });

@@ -24,6 +24,7 @@ const issued: RunTokenRequest[] = [];
 const revoked: string[] = [];
 // How the fake assistant misbehaves in a test
 let unreachable = false;
+let refusal: string | null = null;
 let sessionFails = false;
 // The code a failing query answers with, when a test wants it to fail
 let failure: string | null = null;
@@ -76,6 +77,9 @@ describe("programs", () => {
           if (unreachable) {
             throw new RunTokenError("assistant_unreachable", "No se pudo contactar al asistente");
           }
+          if (refusal !== null) {
+            throw new RunTokenError(refusal, "La persona dueña está inactiva");
+          }
           const granted = request.tools.filter((tool) => usable[request.ownerId]?.includes(tool));
           if (granted.length === 0) {
             throw new RunTokenError(
@@ -122,6 +126,7 @@ describe("programs", () => {
     revoked.length = 0;
     tools.seen.length = 0;
     unreachable = false;
+    refusal = null;
     sessionFails = false;
     failure = null;
   });
@@ -270,6 +275,16 @@ describe("programs", () => {
     expect(revokedAfterFailure).toEqual(["token:1:pedidos_atrasados,send_notice"]);
     expect(away.statusCode).toBe(502);
     expect(away.json()).toMatchObject({ error: "assistant_unavailable" });
+  });
+
+  it("passes on the assistant's refusal of the owner as such, not as an outage", async () => {
+    // Performs the test.
+    refusal = "owner_inactive";
+    const refused = await save("ana");
+
+    // Performs assertions.
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ error: "owner_inactive" });
   });
 
   it("keeps a long error code within its column, and ends the runs a stopped process left", async () => {
