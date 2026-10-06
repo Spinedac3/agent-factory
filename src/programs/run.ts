@@ -313,7 +313,6 @@ class Walker {
       throw new StepFailure(
         this.byId.get(stepId) ?? node,
         `'${stepId}' no trajo la lista '${part ?? "(filas)"}': la herramienta cambió debajo del programa`,
-        true,
       );
     }
 
@@ -580,7 +579,8 @@ class Walker {
     const groups = this.groupsOf(node);
     const recipients = node.per_group?.recipients;
     if (recipients !== undefined) {
-      const without = [...groups.keys()].filter((group) => recipients[group] === undefined);
+      // A group comes from the data: only a recipient the owner wrote counts, never an inherited one
+      const without = [...groups.keys()].filter((group) => !Object.hasOwn(recipients, group));
       for (const group of without) {
         groups.delete(group);
       }
@@ -616,6 +616,8 @@ class Walker {
         ...turns.filter((turn): turn is { group: string; message: string } => turn !== null),
       );
     }
+    // Turns end in any order; the lost ones are named in the same order on every run
+    lost.sort();
     if (written.length === 0) {
       throw new StepFailure(
         node,
@@ -677,7 +679,7 @@ class Walker {
     const recipients = node.per_group?.recipients;
 
     return written.flatMap(({ group, message }) => {
-      const to = recipients?.[group];
+      const to = recipients && Object.hasOwn(recipients, group) ? recipients[group] : undefined;
       const people = to === undefined ? [undefined] : [to].flat();
       return people.map((recipient) =>
         Object.fromEntries(
@@ -814,8 +816,13 @@ class Walker {
         }
         return compare(value, condition.op, condition.value);
       }
+      const missing = (condition.count ?? []).filter((reference) => !(reference in this.counts));
+      // A classify that did not run counted nothing: taking it as zero would choose a way blindly
+      if (missing.length > 0) {
+        throw new Error(`no hay conteo de ${missing.join(", ")}: ese paso no corrió`);
+      }
       const total = (condition.count ?? []).reduce(
-        (sum, reference) => sum + (this.counts[reference] ?? 0),
+        (sum, reference) => sum + (this.counts[reference] as number),
         0,
       );
       return compare(total, condition.op, condition.value);
@@ -884,7 +891,9 @@ class Walker {
       status: "failed",
       reason: stepId === null ? reason : `falló en '${stepId}': ${reason}`,
       endId: null,
-      text: reason,
+      // What was written before the failure is not delivered, but its owner can read it
+      text:
+        this.delivery === null ? reason : `${reason}\n\nLo que sí se redactó:\n${this.delivery}`,
       delivery: null,
       calls: this.calls,
       counts: this.counts,

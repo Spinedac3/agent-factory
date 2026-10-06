@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Person, VerifyPerson } from "../assistant/identity.js";
+import { RunTokenError } from "../assistant/runTokens.js";
 import type { Database } from "../db/client.js";
 import { programs, programVersions, runCalls, runs } from "../db/schema.js";
 import type { Programs } from "../programs/service.js";
@@ -38,6 +39,17 @@ export default async function programsRoutes(
   options: ProgramsRoutesOptions,
 ): Promise<void> {
   const { db, programs: service } = options;
+
+  // Judging and running need the assistant: when it does not answer, the fault is upstream
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof RunTokenError) {
+      request.log.warn({ code: error.code }, "assistant refused or did not answer");
+      return reply
+        .code(502)
+        .send({ ok: false, error: "assistant_unavailable", message: error.message });
+    }
+    throw error;
+  });
 
   /**
    * Finds who calls, answering 401 when the session is not one the assistant signed

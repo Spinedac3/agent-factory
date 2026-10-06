@@ -3,6 +3,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { ToolSchemas } from "../programs/contracts.js";
 import type { ToolAnswer } from "../programs/run.js";
 
+// A query over a large source takes a while; past this the call is stuck, not working
+const CALL_TIMEOUT_MS = 10 * 60_000;
+
 export interface AssistantSession {
   tools: () => Promise<ToolSchemas[]>;
   call: (tool: string, args: Record<string, unknown>) => Promise<ToolAnswer>;
@@ -54,14 +57,27 @@ export async function openSession(assistantUrl: string, token: string): Promise<
   await client.connect(transport);
 
   return {
-    tools: async () =>
-      (await client.listTools()).tools.map((tool) => ({
-        name: tool.name,
-        inputSchema: tool.inputSchema as Record<string, unknown>,
-        outputSchema: tool.outputSchema as Record<string, unknown> | undefined,
-      })),
+    tools: async () => {
+      const tools: ToolSchemas[] = [];
+      // Every page: a long catalog comes in parts
+      let cursor: string | undefined;
+      do {
+        const page = await client.listTools(cursor ? { cursor } : {});
+        tools.push(
+          ...page.tools.map((tool) => ({
+            name: tool.name,
+            inputSchema: tool.inputSchema as Record<string, unknown>,
+            outputSchema: tool.outputSchema as Record<string, unknown> | undefined,
+          })),
+        );
+        cursor = page.nextCursor;
+      } while (cursor);
+      return tools;
+    },
     call: async (tool, args) => {
-      const result = await client.callTool({ name: tool, arguments: args });
+      const result = await client.callTool({ name: tool, arguments: args }, undefined, {
+        timeout: CALL_TIMEOUT_MS,
+      });
       if (result.isError === true) {
         return { ok: false, ...errorOf(result.content) };
       }

@@ -15,20 +15,23 @@ const runTokens = new RunTokens({
   clientId: env.ASSISTANT_CLIENT_ID,
   secret: readFileSync(env.ASSISTANT_CLIENT_SECRET_FILE, "utf8").trim(),
 });
+const programs = new Programs({
+  db: database.db,
+  runTokens,
+  openSession: (token) => openSession(env.ASSISTANT_URL, token),
+  callModel: modelCaller({
+    bin: env.CLAUDE_BIN,
+    model: env.AGENT_MODEL,
+    workspacesDir: env.WORKSPACES_DIR,
+  }),
+  timeZone: env.APP_TIMEZONE,
+});
+// A run left running by a stopped process would wait forever: it ends here, saying why
+await programs.recover();
 const app = await buildApp({
   verifyPerson: personVerifier(assistantKeys(env.ASSISTANT_URL), env.ASSISTANT_ISSUER),
   db: database.db,
-  programs: new Programs({
-    db: database.db,
-    runTokens,
-    openSession: (token) => openSession(env.ASSISTANT_URL, token),
-    callModel: modelCaller({
-      bin: env.CLAUDE_BIN,
-      model: env.AGENT_MODEL,
-      workspacesDir: env.WORKSPACES_DIR,
-    }),
-    timeZone: env.APP_TIMEZONE,
-  }),
+  programs,
 });
 
 try {

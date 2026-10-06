@@ -59,4 +59,22 @@ describe("summarizing rows", () => {
     // Performs assertions.
     expect(lines[1]).toBe("por clase: baja 3 · alta 1");
   });
+
+  it("ranks only numbers, leaving an empty or text value last", () => {
+    // Performs the test.
+    const lines = summaryLines(
+      [
+        { area: "corte", operario: "Ana", piezas: null },
+        { area: "corte", operario: "Beto", piezas: 4 },
+        { area: "corte", operario: "Ciro", piezas: "" },
+        { area: "corte", operario: "Dora", piezas: 2 },
+      ],
+      { by: ["area"], rank: { field: "piezas", n: 3, order: "asc", show: ["operario"] } },
+    );
+
+    // Performs assertions.
+    expect(lines[1]).toBe(
+      "area=corte: filas 4 · menores piezas (3): Dora: piezas=2; Beto: piezas=4; Ana: piezas=(sin dato)",
+    );
+  });
 });

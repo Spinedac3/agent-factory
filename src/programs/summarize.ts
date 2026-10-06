@@ -235,18 +235,24 @@ function rankText(summarize: Summarize, rows: Row[], group: Group): string {
     return "";
   }
   const id = group.key.join(SEPARATOR);
-  const measure = (row: Row): number => {
-    const value = Number(row[rank.field]);
-    if (Number.isFinite(value)) {
-      return value;
+  // Only a number ranks: an empty or text value is not the lowest, it goes last either way
+  const measure = (row: Row): number | null => {
+    const value = row[rank.field];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const byRank = (a: Row, b: Row): number => {
+    const left = measure(a);
+    const right = measure(b);
+    if (left === null || right === null) {
+      return left === right ? 0 : left === null ? 1 : -1;
     }
-    return rank.order === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    return rank.order === "asc" ? left - right : right - left;
   };
   const chosen = rows
     .filter(
       (row) => summarize.by.map((field) => String(row[field] ?? MISSING)).join(SEPARATOR) === id,
     )
-    .sort((a, b) => (rank.order === "asc" ? measure(a) - measure(b) : measure(b) - measure(a)))
+    .sort(byRank)
     .slice(0, rank.n)
     .map(
       (row) =>

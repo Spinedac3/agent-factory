@@ -550,3 +550,168 @@ describe("a join", () => {
     expect(result.reason).toContain("'leer_rutas' trae más de una fila para 'norte'");
   });
 });
+
+describe("the rest of the language", () => {
+  it("calls a tool once with fixed arguments", async () => {
+    // Performs the test.
+    const tools = fakeTools({ pedidos_atrasados: ROWS });
+    await run(
+      withStep("avisar", {
+        from: undefined,
+        only: undefined,
+        order_by: undefined,
+        limit: undefined,
+        per_row: undefined,
+        tool: "pedidos_atrasados",
+        once: { dias: 3 },
+      }),
+      { callTool: tools.callTool },
+    );
+
+    // Performs assertions.
+    expect(tools.seen.map((call) => call.args)).toEqual([{ dias: 1 }, { dias: 3 }]);
+  });
+
+  it("decides by the day, and keeps a class by a list of texts", async () => {
+    // Performs the test.
+    const program = withStep("clasificar", {
+      by: "ruta",
+      classes: [
+        { name: "grave", op: "in", value: ["norte"] },
+        { name: "leve", op: "not in", value: ["sur", "norte"] },
+        { name: "al_dia", rest: true },
+      ],
+      exceptions: undefined,
+    });
+    program.edges = program.edges.map((edge) =>
+      edge.condition ? { ...edge, condition: { day: true, op: "in", value: ["tuesday"] } } : edge,
+    );
+    const tuesday = await run(program);
+    const wednesday = await run(program, { day: "wednesday" });
+
+    // Performs assertions.
+    expect(tuesday.counts).toEqual({
+      "clasificar.grave": 2,
+      "clasificar.leve": 0,
+      "clasificar.al_dia": 2,
+    });
+    expect([tuesday.endId, wednesday.endId]).toEqual(["listo", "nada"]);
+  });
+
+  it("classifies the groups a summary makes, not the rows", async () => {
+    // Performs the test.
+    const result = await run(
+      withStep("clasificar", {
+        summarize: { by: ["ruta"], sum: ["monto"] },
+        by: "monto",
+        classes: [
+          { name: "grave", op: ">=", value: 400 },
+          { name: "leve", op: ">=", value: 1000 },
+          { name: "al_dia", rest: true },
+        ],
+        exceptions: undefined,
+      }),
+      { callModel: undefined },
+    );
+
+    // Performs assertions.
+    expect(result.counts).toEqual({
+      "clasificar.grave": 1,
+      "clasificar.leve": 0,
+      "clasificar.al_dia": 1,
+    });
+  });
+
+  it("fills a template one level deep inside an item", async () => {
+    // Performs the test.
+    const tools = fakeTools({ pedidos_atrasados: ROWS });
+    await run(
+      withStep("avisar", {
+        only: ["grave"],
+        limit: 1,
+        per_row: {
+          key: "k-${pedido}",
+          to: "a@example.com",
+          subject: "s",
+          message: { cliente: "${cliente}", dias: "${atraso_dias}" } as unknown as string,
+        },
+      }),
+      { callTool: tools.callTool },
+    );
+
+    // Performs assertions.
+    expect(tools.seen[1]?.args).toEqual({
+      notices: [
+        {
+          key: "k-P-4",
+          to: "a@example.com",
+          subject: "s",
+          message: { cliente: "Mini Mar", dias: "12" },
+        },
+      ],
+    });
+  });
+
+  it("takes on_failure when a list it promised does not come", async () => {
+    // Performs the test.
+    const result = await run(lateOrders(), {
+      callTool: fakeTools({ pedidos_atrasados: { ok: true, data: { total_filas: 0 } } }).callTool,
+    });
+
+    // Performs assertions.
+    expect([result.status, result.endId]).toEqual(["delivered", "sin_datos"]);
+    expect(result.text).toContain("'leer' no trajo la lista 'filas'");
+  });
+
+  it("refuses to count a classify that did not run, instead of taking zero", async () => {
+    // Performs the test.
+    const program = withStep("clasificar", { on_failure: "hay" });
+    const withNull = {
+      ok: true as const,
+      data: { filas: [{ ...ORDERS[0], atraso_dias: null }], total_filas: 1 },
+    };
+    const result = await run(program, {
+      callTool: fakeTools({ pedidos_atrasados: withNull }).callTool,
+    });
+
+    // Performs assertions.
+    expect(result.reason).toContain(
+      "no hay conteo de clasificar.grave, clasificar.leve: ese paso no corrió",
+    );
+  });
+
+  it("keeps what it wrote when a step without a tool loses a group, for its owner to read", async () => {
+    // Performs the test.
+    const result = await run(agentic({ tool: undefined, per_group: undefined }), {
+      callModel: async ({ group }) => {
+        if (group === "sur") {
+          throw new Error("sin cupo");
+        }
+        return "Resumen del norte";
+      },
+    });
+
+    // Performs assertions.
+    expect([result.status, result.delivery]).toEqual(["failed", null]);
+    expect(result.text).toContain("Lo que sí se redactó:\nResumen del norte");
+  });
+
+  it("drops a group named like a property every object has, unless the owner listed it", async () => {
+    // Performs the test.
+    const odd = {
+      ok: true as const,
+      data: { filas: [{ ...ORDERS[0], ruta: "constructor" }, ORDERS[2]], total_filas: 2 },
+    };
+    const tools = fakeTools({ pedidos_atrasados: odd });
+    const result = await run(agentic({}), {
+      callTool: tools.callTool,
+      callModel: async ({ group }) => `Aviso ${group}`,
+    });
+
+    // Performs assertions.
+    expect(result.counts["avisar.without_recipient"]).toBe(1);
+    expect(tools.seen[1]?.args).toEqual({
+      notices: [expect.objectContaining({ to: "norte@example.com" })],
+    });
+  });
+});

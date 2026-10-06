@@ -1,4 +1,4 @@
-import type { ToolContract } from "./contracts.js";
+import type { Batch, ToolContract } from "./contracts.js";
 import { dominates, hasCycle, reachable, stepById, stepOf, templateFields } from "./graph.js";
 import {
   type Condition,
@@ -144,8 +144,14 @@ function stepShapeErrors(
     if (out.length < 2) {
       errors.push(`La decisión '${node.id}' necesita al menos dos salidas`);
     }
-  } else if (out.length !== 1) {
-    errors.push(`El paso '${node.id}' tiene que llevar a exactamente un paso siguiente`);
+  } else {
+    if (out.length !== 1) {
+      errors.push(`El paso '${node.id}' tiene que llevar a exactamente un paso siguiente`);
+    }
+    // Only a decision reads them: anywhere else they would look like a choice nobody makes
+    if (out.some((edge) => edge.condition !== undefined || edge.otherwise === true)) {
+      errors.push(`'${node.id}' no es una decisión: su salida no lleva condición ni 'otherwise'`);
+    }
   }
   if (node.tool !== undefined) {
     if (node.type !== "query" && node.type !== "action") {
@@ -253,6 +259,10 @@ function conditionErrors(
     const days = [condition.value].flat();
     if (!days.every((day) => (DAYS as readonly unknown[]).includes(day))) {
       errors.push(`La condición de '${decisionId}' compara el día con algo que no es un día`);
+    }
+    // A day has no order: monday is not less than friday
+    if (!["==", "!=", "in", "not in"].includes(condition.op)) {
+      errors.push(`La condición de '${decisionId}' ordena días, y un día solo es igual o distinto`);
     }
   }
 
@@ -452,6 +462,9 @@ function classifyErrors(program: Program, node: ProgramNode, catalog: Catalog): 
   const errors: string[] = [];
   const classes = node.classes ?? [];
   const names = new Set(classes.map((item) => item.name));
+  if (names.size !== classes.length) {
+    errors.push(`'${node.id}' repite el nombre de una clase`);
+  }
   // A rest at the end leaves no value without a class, so no row can fail to land
   if (classes.filter((item) => item.rest === true).length !== 1 || classes.at(-1)?.rest !== true) {
     errors.push(`'${node.id}' necesita exactamente una clase rest, y al final`);
@@ -597,9 +610,7 @@ function perRowErrors(program: Program, node: ProgramNode, catalog: Catalog): st
   errors.push(...rowsErrors(node, source));
   const perRow = node.per_row ?? {};
   for (const [name, template] of Object.entries(perRow)) {
-    if (!batch.fields.includes(name)) {
-      errors.push(`'${node.id}' manda '${name}', que ${node.tool} no recibe en cada elemento`);
-    }
+    errors.push(...itemFieldErrors(node, batch, name, template));
     for (const field of templateFields(template)) {
       if (!source.fields.has(field)) {
         errors.push(`La plantilla de '${node.id}' usa \${${field}}, que sus filas no traen`);
@@ -614,6 +625,31 @@ function perRowErrors(program: Program, node: ProgramNode, catalog: Catalog): st
   }
 
   return errors;
+}
+
+/**
+ * Checks one field of a batch item: the tool takes it, and a text can fill it
+ *
+ * @param   node      The action
+ * @param   batch     The tool's batch
+ * @param   name      The field
+ * @param   template  What fills it
+ *
+ * @return  The errors
+ */
+function itemFieldErrors(
+  node: ProgramNode,
+  batch: Batch,
+  name: string,
+  template: unknown,
+): string[] {
+  if (!batch.fields.includes(name)) {
+    return [`'${node.id}' manda '${name}', que ${node.tool} no recibe en cada elemento`];
+  }
+  // A template always gives text, so a field that takes a number would be refused on every run
+  return typeof template === "string" && batch.nonText.includes(name)
+    ? [`'${node.id}' llena '${name}' con texto, y ${node.tool} espera ahí otro tipo de dato`]
+    : [];
 }
 
 /**
@@ -715,9 +751,7 @@ function groupItemErrors(node: ProgramNode, catalog: Catalog, hasRecipients: boo
   const fields = node.per_group?.fields ?? {};
   const known = GROUP_FIELDS.filter((field) => field !== "recipient" || hasRecipients);
   for (const [name, template] of Object.entries(fields)) {
-    if (!batch.fields.includes(name)) {
-      errors.push(`'${node.id}' manda '${name}', que ${node.tool} no recibe en cada elemento`);
-    }
+    errors.push(...itemFieldErrors(node, batch, name, template));
     for (const field of templateFields(template).filter((item) => !known.includes(item))) {
       errors.push(
         `'${node.id}' usa \${${field}} por grupo, y ahí solo existen ${known.map((item) => `\${${item}}`).join(", ")}`,

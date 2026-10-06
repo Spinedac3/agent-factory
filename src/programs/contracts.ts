@@ -17,9 +17,14 @@ export interface Batch {
   name: string;
   fields: string[];
   required: string[];
+  // Fields that take something other than text, which a template, always text, cannot fill
+  nonText: string[];
   // How many items one call takes; larger batches are split
   max: number | null;
 }
+
+// Notes the assistant's size cap adds about the result, never data of it
+const CAP_NOTES = ["nota", "nota_filtro"];
 
 export interface ToolContract {
   lists: RowList[];
@@ -88,7 +93,10 @@ export function contractOf(tool: ToolSchemas): ToolContract {
     const items = itemsOf(property);
     if (items) {
       lists.push({ name, fields: Object.keys(propertiesOf(items)) });
-    } else if (![property.type].flat().some((type) => type === "array" || type === "object")) {
+    } else if (
+      !CAP_NOTES.includes(name) &&
+      ![property.type].flat().some((type) => type === "array" || type === "object")
+    ) {
       aggregates.push(name);
     }
   }
@@ -107,7 +115,15 @@ export function contractOf(tool: ToolSchemas): ToolContract {
             name: batchEntry[0],
             fields: Object.keys(propertiesOf(batchItems)),
             required: requiredOf(batchItems),
-            max: typeof batchEntry[1].maxItems === "number" ? batchEntry[1].maxItems : null,
+            nonText: Object.entries(propertiesOf(batchItems))
+              .filter(
+                ([, field]) => field.type !== undefined && ![field.type].flat().includes("string"),
+              )
+              .map(([name]) => name),
+            max:
+              typeof batchEntry[1].maxItems === "number" && batchEntry[1].maxItems >= 1
+                ? batchEntry[1].maxItems
+                : null,
           }
         : null,
   };

@@ -35,15 +35,25 @@ const value = z.union([z.number(), z.string(), z.array(z.string()).min(1)]);
 const LENGTH_IN_PROSE =
   /\d[\d.,]*\s*(car[aá]cteres|chars?|characters|palabras|words)\b|m[aá]ximo\s+(de\s+)?\d/i;
 
+// The operators that order, which only compare numbers
+const ORDERING = ["<", "<=", ">", ">="];
+const OPERATOR_VALUE =
+  "'in' y 'not in' comparan contra una lista de textos; <, <=, > y >= contra un número; == y != contra un solo valor";
+
 /**
- * Tells whether an operator compares against a list of texts
+ * Tells whether a value is what its operator compares against: a list for in, a number to order
  *
- * @param   op  The operator
+ * @param   op     The operator
+ * @param   value  The value declared
  *
- * @return  Whether it does
+ * @return  Whether it fits
  */
-function takesList(op: (typeof OPERATORS)[number]): boolean {
-  return (LIST_OPERATORS as readonly string[]).includes(op);
+function fitsOperator(op: (typeof OPERATORS)[number], value: unknown): boolean {
+  if ((LIST_OPERATORS as readonly string[]).includes(op)) {
+    return Array.isArray(value);
+  }
+
+  return ORDERING.includes(op) ? typeof value === "number" : !Array.isArray(value);
 }
 
 export const conditionSchema = z
@@ -63,10 +73,7 @@ export const conditionSchema = z
         .length === 1,
     "Una condición mira exactamente una cosa: field, count o day",
   )
-  .refine(
-    (condition) => Array.isArray(condition.value) === takesList(condition.op),
-    "'in' y 'not in' comparan contra una lista de textos; los demás, contra un solo valor",
-  );
+  .refine((condition) => fitsOperator(condition.op, condition.value), OPERATOR_VALUE);
 
 export const classSchema = z
   .object({
@@ -82,10 +89,7 @@ export const classSchema = z
     (item) => (item.rest === true) !== (item.op !== undefined && item.value !== undefined),
     "Una clase tiene op y value, o es rest; no las dos cosas ni ninguna",
   )
-  .refine(
-    (item) => item.op === undefined || Array.isArray(item.value) === takesList(item.op),
-    "'in' y 'not in' comparan contra una lista de textos; los demás, contra un solo valor",
-  );
+  .refine((item) => item.op === undefined || fitsOperator(item.op, item.value), OPERATOR_VALUE);
 
 export const summarizeSchema = z
   .object({

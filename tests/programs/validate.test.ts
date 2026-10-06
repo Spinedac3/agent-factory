@@ -60,6 +60,7 @@ describe("judging a program", () => {
       name: "notices",
       fields: ["key", "to", "subject", "message"],
       required: ["key", "to", "subject", "message"],
+      nonText: [],
       max: 2,
     });
   });
@@ -311,5 +312,123 @@ describe("judging a program", () => {
     expect(verdict.warnings).toEqual([
       "Ningún paso usa lo que 'cruzar' trae: o falta conectarlo, o sobra",
     ]);
+  });
+
+  it("refuses a step that reads from the one whose failure brought it there", () => {
+    // Performs the test.
+    const errors = errorsWith("clasificar", { on_failure: "avisar" });
+
+    // Performs assertions.
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "'avisar' toma filas de 'clasificar', pero hay caminos que llegan sin pasar por él",
+      ]),
+    );
+  });
+
+  it("refuses comparing a text by order, ordering days, and choices outside a decision", () => {
+    // Performs the test.
+    const textOrder = errorsWith("clasificar", {
+      classes: [
+        { name: "grave", op: ">=", value: "7" as unknown as number },
+        { name: "resto", rest: true },
+      ],
+    });
+    const dayOrder = errorsWithEdges((program) =>
+      program.edges.map((edge) =>
+        edge.condition ? { ...edge, condition: { day: true, op: ">", value: 3 } } : edge,
+      ),
+    );
+    const outside = errorsWithEdges((program) =>
+      program.edges.map((edge) =>
+        edge.from === "leer"
+          ? { ...edge, condition: { day: true, op: "==", value: "monday" } }
+          : edge,
+      ),
+    );
+
+    // Performs assertions.
+    expect(textOrder).toEqual([expect.stringContaining("contra un número")]);
+    expect(dayOrder).toEqual(
+      expect.arrayContaining([
+        "La condición de 'hay' compara el día con algo que no es un día",
+        "La condición de 'hay' ordena días, y un día solo es igual o distinto",
+      ]),
+    );
+    expect(outside).toEqual([
+      "'leer' no es una decisión: su salida no lleva condición ni 'otherwise'",
+    ]);
+  });
+
+  it("refuses a repeated class name", () => {
+    // Performs the test.
+    const errors = errorsWith("clasificar", {
+      classes: [
+        { name: "grave", op: ">=", value: 7 },
+        { name: "grave", op: ">=", value: 3 },
+        { name: "al_dia", rest: true },
+      ],
+    });
+
+    // Performs assertions.
+    expect(errors).toEqual(expect.arrayContaining(["'clasificar' repite el nombre de una clase"]));
+  });
+
+  it("refuses filling with text a field the tool takes as a number", () => {
+    // Performs the test.
+    const numbered = contractOf({
+      name: "send_notice",
+      inputSchema: {
+        type: "object",
+        properties: {
+          notices: {
+            type: "array",
+            maxItems: 0,
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string" },
+                to: { type: "string" },
+                subject: { type: "string" },
+                message: { type: "string" },
+                priority: { type: "integer" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const program = lateOrders();
+    program.nodes = program.nodes.map((node) =>
+      node.id === "avisar"
+        ? { ...node, per_row: { ...node.per_row, priority: "${atraso_dias}" } }
+        : node,
+    );
+    const errors = judgeProgram(program, new Map([...CATALOG, ["send_notice", numbered]])).errors;
+
+    // Performs assertions.
+    expect(numbered.batch).toMatchObject({ nonText: ["priority"], max: null });
+    expect(errors).toEqual([
+      "'avisar' llena 'priority' con texto, y send_notice espera ahí otro tipo de dato",
+    ]);
+  });
+
+  it("leaves out of the values a condition can read the notes the assistant's cap adds", () => {
+    // Performs the test.
+    const contract = contractOf({
+      name: "x",
+      inputSchema: { type: "object", properties: {} },
+      outputSchema: {
+        type: "object",
+        properties: {
+          total: { type: "integer" },
+          nota: { type: "string" },
+          nota_filtro: { type: "string" },
+        },
+      },
+    });
+
+    // Performs assertions.
+    expect(contract.aggregates).toEqual(["total"]);
   });
 });

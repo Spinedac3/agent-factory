@@ -45,29 +45,21 @@ export function hasCycle(program: Program): boolean {
 }
 
 /**
- * Lists the steps reachable from the start, following edges and jumps on failure
+ * Walks from the start, going from each step where it says
  *
  * @param   program  The program
- * @param   without  A step the walk may not go through
+ * @param   next     The steps a step leads to
  *
  * @return  The ids reached
  */
-export function reachable(program: Program, without?: string): Set<string> {
+function walk(program: Program, next: (id: string) => string[]): Set<string> {
   const start = program.nodes.find((node) => node.type === "start");
-  const seen = new Set<string>();
-  if (!start || start.id === without) {
-    return seen;
-  }
-  const all = arrows(program);
-  const queue = [start.id];
-  seen.add(start.id);
+  const seen = new Set<string>(start ? [start.id] : []);
+  const queue = [...seen];
   while (queue.length > 0) {
-    const current = queue.shift() as string;
-    for (const arrow of all.filter((item) => item.from === current && item.to !== without)) {
-      if (!seen.has(arrow.to)) {
-        seen.add(arrow.to);
-        queue.push(arrow.to);
-      }
+    for (const to of next(queue.shift() as string).filter((id) => !seen.has(id))) {
+      seen.add(to);
+      queue.push(to);
     }
   }
 
@@ -75,8 +67,21 @@ export function reachable(program: Program, without?: string): Set<string> {
 }
 
 /**
- * Tells whether every way from the start to a step goes through another, which is what lets the
- * step use that other one's output
+ * Lists the steps reachable from the start, following edges and jumps on failure
+ *
+ * @param   program  The program
+ *
+ * @return  The ids reached
+ */
+export function reachable(program: Program): Set<string> {
+  const all = arrows(program);
+
+  return walk(program, (id) => all.filter((arrow) => arrow.from === id).map((arrow) => arrow.to));
+}
+
+/**
+ * Tells whether every way from the start to a step goes through another and gets past it, which
+ * is what lets the step use that other one's output
  *
  * @param   program  The program
  * @param   before   The step that must always run first
@@ -85,15 +90,22 @@ export function reachable(program: Program, without?: string): Set<string> {
  * @return  Whether it dominates
  */
 export function dominates(program: Program, before: string, step: string): boolean {
-  if (before === step) {
-    return false;
-  }
   const start = program.nodes.find((node) => node.type === "start");
-  if (!start || start.id === step) {
+  if (before === step || !start || start.id === step) {
     return false;
   }
+  const all = arrows(program);
+  // A step that failed left nothing to read, so its jump on failure is a way around it
+  const failure = program.nodes.find((node) => node.id === before)?.on_failure;
+  const reached = walk(program, (id) =>
+    id === before
+      ? failure === undefined
+        ? []
+        : [failure]
+      : all.filter((arrow) => arrow.from === id).map((arrow) => arrow.to),
+  );
 
-  return before === start.id || !reachable(program, before).has(step);
+  return !reached.has(step);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { AssistantSession } from "../assistant/mcp.js";
 import type { RunToken, RunTokenRequest } from "../assistant/runTokens.js";
 import { RunTokenError } from "../assistant/runTokens.js";
@@ -84,11 +84,13 @@ export class Programs {
       }
       throw error;
     }
-    const session = await this.deps.openSession(granted.token);
+    // Inside the try, so the token ends even when the session cannot open
+    let session: AssistantSession | null = null;
     try {
+      session = await this.deps.openSession(granted.token);
       return new Map((await session.tools()).map((tool) => [tool.name, contractOf(tool)]));
     } finally {
-      await session.close();
+      await session?.close().catch(() => undefined);
       await this.deps.runTokens.revoke(granted.token).catch(() => undefined);
     }
   }
@@ -124,10 +126,23 @@ export class Programs {
       await this.catalogFor(ownerId, toolsOf(parsed.program)),
     );
     const values = { name, description, draft: parsed.program, updatedAt: new Date() };
-    if (existing) {
-      await this.deps.db.update(programs).set(values).where(eq(programs.id, existing.id));
-    } else {
-      await this.deps.db.insert(programs).values({ ...values, code, ownerId });
+    // A code taken by someone else between the read and the write is still theirs
+    const created = existing
+      ? []
+      : await this.deps.db
+          .insert(programs)
+          .values({ ...values, code, ownerId })
+          .onConflictDoNothing({ target: programs.code })
+          .returning({ id: programs.id });
+    if (created.length === 0) {
+      const changed = await this.deps.db
+        .update(programs)
+        .set(values)
+        .where(and(eq(programs.code, code), eq(programs.ownerId, ownerId)))
+        .returning({ id: programs.id });
+      if (changed.length === 0) {
+        return null;
+      }
     }
 
     return { code, verdict };
@@ -156,18 +171,23 @@ export class Programs {
     if (verdict.errors.length > 0) {
       return { version: null, verdict };
     }
-    const [last] = await this.deps.db
-      .select({ version: programVersions.version })
-      .from(programVersions)
-      .where(eq(programVersions.programId, program.id))
-      .orderBy(desc(programVersions.version))
-      .limit(1);
-    const version = (last?.version ?? 0) + 1;
-    await this.deps.db.insert(programVersions).values({
-      programId: program.id,
-      version,
-      definition: program.draft,
-      publishedBy: ownerId,
+    // One publish of a program at a time, so two at once take two numbers instead of one
+    const version = await this.deps.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${program.id})`);
+      const [last] = await tx
+        .select({ version: programVersions.version })
+        .from(programVersions)
+        .where(eq(programVersions.programId, program.id))
+        .orderBy(desc(programVersions.version))
+        .limit(1);
+      const next = (last?.version ?? 0) + 1;
+      await tx.insert(programVersions).values({
+        programId: program.id,
+        version: next,
+        definition: program.draft,
+        publishedBy: ownerId,
+      });
+      return next;
     });
 
     return { version, verdict };
@@ -224,8 +244,27 @@ export class Programs {
     return runId;
   }
 
-  // Runs on demand, one after another; the scheduler of later phases spreads them
+  // Runs on demand go one after another, so a burst of requests never runs them all at once
   private running: Promise<void> = Promise.resolve();
+
+  /**
+   * Ends the runs a stopped process left running: nothing will finish them, and nobody should wait
+   *
+   * @return  How many were ended
+   */
+  async recover(): Promise<number> {
+    const ended = await this.deps.db
+      .update(runs)
+      .set({
+        status: "failed",
+        reason: "la corrida se interrumpió: la fábrica se detuvo mientras corría",
+        finishedAt: new Date(),
+      })
+      .where(eq(runs.status, "running"))
+      .returning({ id: runs.id });
+
+    return ended.length;
+  }
 
   /**
    * Waits for the runs already started, for whoever needs them finished
@@ -261,31 +300,35 @@ export class Programs {
         steps: [],
       };
     }
-    await this.deps.db
-      .update(runs)
-      .set({
-        status: result.status,
-        reason: result.reason,
-        text: result.text,
-        delivery: result.delivery,
-        counts: result.counts,
-        steps: result.steps,
-        finishedAt: new Date(),
-      })
-      .where(eq(runs.id, runId));
-    if (result.calls.length > 0) {
-      await this.deps.db.insert(runCalls).values(
-        result.calls.map((call, position) => ({
-          runId,
-          position,
-          step: call.step,
-          tool: call.tool,
-          args: call.args,
-          ok: call.ok,
-          error: call.error,
-        })),
-      );
-    }
+    // The outcome and its calls land together: a run is never finished with half its record
+    await this.deps.db.transaction(async (tx) => {
+      await tx
+        .update(runs)
+        .set({
+          status: result.status,
+          reason: result.reason,
+          text: result.text,
+          delivery: result.delivery,
+          counts: result.counts,
+          steps: result.steps,
+          finishedAt: new Date(),
+        })
+        .where(eq(runs.id, runId));
+      if (result.calls.length > 0) {
+        await tx.insert(runCalls).values(
+          result.calls.map((call, position) => ({
+            runId,
+            position,
+            step: call.step,
+            tool: call.tool,
+            args: call.args,
+            ok: call.ok,
+            // The code comes from the assistant: kept within its column whatever its length
+            error: call.error?.slice(0, 64) ?? null,
+          })),
+        );
+      }
+    });
   }
 
   /**
@@ -303,8 +346,9 @@ export class Programs {
       tools.length === 0
         ? null
         : await this.deps.runTokens.issue({ ownerId, tools, minutes: RUN_MINUTES, runId });
-    const session = token ? await this.deps.openSession(token.token) : null;
+    let session: AssistantSession | null = null;
     try {
+      session = token ? await this.deps.openSession(token.token) : null;
       const catalog: Catalog = new Map(
         ((await session?.tools()) ?? []).map((tool) => [tool.name, contractOf(tool)]),
       );

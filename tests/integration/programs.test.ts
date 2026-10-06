@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../../src/app.js";
@@ -21,8 +22,16 @@ let programs: Programs;
 let usable: Record<number, string[]>;
 const issued: RunTokenRequest[] = [];
 const revoked: string[] = [];
+// How the fake assistant misbehaves in a test
+let unreachable = false;
+let sessionFails = false;
+// The code a failing query answers with, when a test wants it to fail
+let failure: string | null = null;
 const tools = fakeTools({
-  pedidos_atrasados: { ok: true, data: { filas: ORDERS, total_filas: ORDERS.length } },
+  pedidos_atrasados: () =>
+    failure === null
+      ? { ok: true, data: { filas: ORDERS, total_filas: ORDERS.length } }
+      : { ok: false, error: failure, message: "la consulta falló" },
 });
 
 /**
@@ -64,6 +73,9 @@ describe("programs", () => {
       runTokens: {
         issue: async (request) => {
           issued.push(request);
+          if (unreachable) {
+            throw new RunTokenError("assistant_unreachable", "No se pudo contactar al asistente");
+          }
           const granted = request.tools.filter((tool) => usable[request.ownerId]?.includes(tool));
           if (granted.length === 0) {
             throw new RunTokenError(
@@ -84,6 +96,9 @@ describe("programs", () => {
         },
       },
       openSession: async (token): Promise<AssistantSession> => {
+        if (sessionFails) {
+          throw new Error("la sesión no abrió");
+        }
         const granted = token.split(":")[2]?.split(",") ?? [];
         return {
           tools: async () => TOOLS.filter((tool) => granted.includes(tool.name)),
@@ -106,6 +121,9 @@ describe("programs", () => {
     issued.length = 0;
     revoked.length = 0;
     tools.seen.length = 0;
+    unreachable = false;
+    sessionFails = false;
+    failure = null;
   });
 
   afterAll(async () => {
@@ -224,6 +242,62 @@ describe("programs", () => {
       reason:
         "el asistente no dio el token de la corrida: La persona dueña ya no puede usar ninguna",
       calls: [],
+    });
+  });
+
+  it("gives two publishes at the same time two numbers", async () => {
+    // Performs the test.
+    await as("ana", "PUT", "/programs/doble", { name: "Doble publicación", program: lateOrders() });
+    const both = await Promise.all([
+      as("ana", "POST", "/programs/doble/publish"),
+      as("ana", "POST", "/programs/doble/publish"),
+    ]);
+
+    // Performs assertions.
+    expect(both.map((response) => response.json().data.version).sort()).toEqual([1, 2]);
+  });
+
+  it("ends the token even when the session cannot open, and answers 502 when the assistant is away", async () => {
+    // Performs the test.
+    sessionFails = true;
+    const failing = await save("ana");
+    const revokedAfterFailure = [...revoked];
+    sessionFails = false;
+    unreachable = true;
+    const away = await save("ana");
+
+    // Performs assertions.
+    expect(failing.statusCode).toBe(500);
+    expect(revokedAfterFailure).toEqual(["token:1:pedidos_atrasados,send_notice"]);
+    expect(away.statusCode).toBe(502);
+    expect(away.json()).toMatchObject({ error: "assistant_unavailable" });
+  });
+
+  it("keeps a long error code within its column, and ends the runs a stopped process left", async () => {
+    // Performs the test.
+    await save("ana");
+    await as("ana", "POST", "/programs/atrasos/publish");
+    failure = "x".repeat(200);
+    const runId = (await as("ana", "POST", "/programs/atrasos/runs")).json().data.run_id as string;
+    await programs.idle();
+    const failed = await as("ana", "GET", `/runs/${runId}`);
+    failure = null;
+    const stuck = (await as("ana", "POST", "/programs/atrasos/runs")).json().data.run_id as string;
+    await programs.idle();
+    await database.db.execute(
+      sql`update runs set status = 'running', finished_at = null where id = ${stuck}`,
+    );
+    const ended = await programs.recover();
+    const after = await as("ana", "GET", `/runs/${stuck}`);
+
+    // Performs assertions.
+    expect(failed.json().data.calls).toEqual([
+      expect.objectContaining({ tool: "pedidos_atrasados", ok: false, error: "x".repeat(64) }),
+    ]);
+    expect(ended).toBe(1);
+    expect(after.json().data).toMatchObject({
+      status: "failed",
+      reason: "la corrida se interrumpió: la fábrica se detuvo mientras corría",
     });
   });
 });
