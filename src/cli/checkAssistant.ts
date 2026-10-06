@@ -13,7 +13,7 @@ if (!Number.isInteger(ownerId) || ownerId <= 0 || tools.length === 0) {
 const env = loadEnv();
 if (!existsSync(env.ASSISTANT_CLIENT_SECRET_FILE)) {
   throw new Error(
-    `Falta el secreto en ${env.ASSISTANT_CLIENT_SECRET_FILE}; créalo en el asistente con pnpm machine:create agent-factory`,
+    `Falta el secreto en ${env.ASSISTANT_CLIENT_SECRET_FILE}; créalo en el asistente con pnpm machine:create ${env.ASSISTANT_CLIENT_ID}`,
   );
 }
 const runTokens = new RunTokens({
