@@ -19,3 +19,6 @@ _local/
 
 # Keys and secrets are files, never committed
 secrets/
+
+# Folders of the model turns while they run
+workspaces/
